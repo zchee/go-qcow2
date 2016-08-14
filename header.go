@@ -72,9 +72,6 @@ func (cm CryptMethod) String() string {
 	return "none"
 }
 
-type Driver struct {
-}
-
 type PreallocMode int
 
 const (

@@ -9,6 +9,7 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
+	"syscall"
 )
 
 // "compat"
@@ -90,11 +91,18 @@ func Create(cfg *Config) QCowHeader {
 	// TODO(zchee): Support (prealloc == PREALLOC_MODE_FULL || prealloc == PREALLOC_MODE_FALLOC)
 	// if (prealloc == PREALLOC_MODE_FULL || prealloc == PREALLOC_MODE_FALLOC) {}
 
-	blk := new(BlockBackend)
+	blkOption := new(BlockOption)
+	image, err := CreateFile(cfg.FileName, blkOption)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer image.Close()
+	defer os.Remove(image.Name())
 
-	blk.CreateFile(cfg.FileName)
-	defer blk.disk.Close()
-	defer os.Remove(blk.disk.Name())
+	blk := new(BlockBackend)
+	if err := blk.Open(image.Name(), "", nil, os.O_RDWR); err != nil {
+		log.Fatal(err)
+	}
 
 	blk.allowBeyondEOF = true
 
@@ -146,37 +154,27 @@ func Create(cfg *Config) QCowHeader {
 		log.Fatal(err)
 	}
 
-	data, _ := ioutil.ReadAll(blk.disk)
+	options := NewBlockOption(DriverQCow2)
+	if err := blk.Open(image.Name(), "", options, os.O_RDWR|syscall.O_NONBLOCK); err != nil {
+		log.Fatal(err)
+	}
+	defer blk.img.Close()
+
+	data, _ := ioutil.ReadAll(blk.img)
 	log.Printf("data: %d\n%+v\n", len(data), data)
 
 	return header
 }
 
 // CreateFile creates the new file based by block driver backend.
-func (bdrv *BlockBackend) CreateFile(filename string) error {
-	disk, err := ioutil.TempFile(os.TempDir(), "qcow2")
+func CreateFile(filename string, options *BlockOption) (*os.File, error) {
+	image, err := ioutil.TempFile(os.TempDir(), "qcow2")
 	// disk, err := os.Create(cfg.FileName)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	bdrv.disk = disk
-
-	// drv := "protocol?"
-	// if drv == "" {
-	// 	err := errors.New("unknown protocol")
-	// 	return err
-	// }
-
-	// f, err := os.Open(filename)
-	// if err != nil {
-	// 	return errors.Wrap(err, "invalid filename")
-	// }
-	// AllowWriteBeyondEOF = true
-
-	// header := &QCowHeader{}
-
-	return nil
+	return image, nil
 }
 
 // ToBigEndian32 convert the int32 type of varint(varying-length integer) to the binary data of big endian format byte order.
