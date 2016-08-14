@@ -1,0 +1,13 @@
+{
+	"version": 0,
+	"dependencies": [
+		{
+			"importpath": "github.com/pkg/errors",
+			"repository": "https://github.com/pkg/errors",
+			"vcs": "git",
+			"revision": "a22138067af1c4942683050411a841ade67fe1eb",
+			"branch": "master",
+			"notests": true
+		}
+	]
+}
