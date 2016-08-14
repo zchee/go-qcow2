@@ -81,7 +81,7 @@ type Config struct {
 // Create create the new QCow2 virtual disk image.
 //  Docker.qcow2[0:104]:
 //  81 70 73 251 0 0 0 3 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 16 0 0 0 16 0 0 0 0 0 0 0 0 0 0 0 128 0 0 0 0 0 2 0 0 0 0 0 0 0 1 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 4 0 0 0 104
-func Create(cfg *Config) QCowHeader {
+func Create(cfg *Config) *QCowHeader {
 	// clusterBits := ToBigEndian32(cfg.ClusterSize)
 	// if clusterBits < MinClusterBits || clusterBits > MaxClusterBits || (1<<uintptr(clusterBits)) != cfg.ClusterSize {
 	// 	_ = errors.Errorf("Cluster size must be a power of two between %d and %dk", 1<<MinClusterBits, 1<<(MaxClusterBits-10))
@@ -106,7 +106,7 @@ func Create(cfg *Config) QCowHeader {
 
 	blk.allowBeyondEOF = true
 
-	header := QCowHeader{
+	header := &QCowHeader{
 		Magic:                 Qcow2Magic,
 		Version:               Version3,
 		BackingFileOffset:     int64(0),
@@ -148,7 +148,7 @@ func Create(cfg *Config) QCowHeader {
 		header.CompatibleFeatures = int64(QCow2CompatLazyRefcounts)
 	}
 
-	blk.header = &header
+	blk.header = header
 
 	if err := blk.WriteHeader(); err != nil {
 		log.Fatal(err)
