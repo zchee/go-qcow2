@@ -6,16 +6,20 @@ package qcow2
 
 import "os"
 
+// Driver represents a name of driver.
 type Driver string
 
 const (
+	// DriverQCow2 qcow2 driver.
 	DriverQCow2 Driver = "qcow2"
 )
 
+// BlockOption represents a block options.
 type BlockOption struct {
 	Driver Driver
 }
 
+// NewBlockOption return the new BlockOption.
 func NewBlockOption(driver Driver) *BlockOption {
 	return &BlockOption{
 		Driver: driver,
@@ -31,7 +35,7 @@ type BlockBackend struct {
 	Error error
 }
 
-// NewBlock return the new bulk structure.
+// NewBlockBackend return the new bulk structure.
 func NewBlockBackend(header *QCowHeader, disk *os.File) *BlockBackend {
 	return &BlockBackend{
 		header: header,
