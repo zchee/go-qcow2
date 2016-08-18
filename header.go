@@ -4,67 +4,69 @@
 
 package qcow2
 
+// QcowMagic QCOW magic string ("QFI\xfb")
+//  #define QCOW_MAGIC (('Q' << 24) | ('F' << 16) | ('I' << 8) | 0xfb)
+var QcowMagic = []byte{0x51, 0x46, 0x49, 0xFB}
+
+// QCow2 represents a qemu QCow2 image format.
 type QCow2 struct {
 	Header *QCowHeader
 }
 
-// Qcow2 qcow2 image header.
+// QCowHeader represents a header of qcow2 image format.
 type QCowHeader struct {
-	Magic                 []byte      // [0:4] magic: QCOW magic string ("QFI\xfb")
-	Version               Version     // [4:8] Version number
-	BackingFileOffset     int64       // [8:16] Offset into the image file at which the backing file name is stored.
-	BackingFileSize       int32       // [16:20] Length of the backing file name in bytes.
-	ClusterBits           int32       // [20:24] Number of bits that are used for addressing an offset whithin a cluster.
-	Size                  int64       // [24:32] Virtual disk size in bytes
-	CryptMethod           CryptMethod // [32:36] Crypt method
-	L1Size                int32       // [36:40] Number of entries in the active L1 table
-	L1TableOffset         int64       // [40:48] Offset into the image file at which the active L1 table starts
-	RefcountTableOffset   int64       // [48:56] Offset into the image file at which the refcount table starts
-	RefcountTableClusters int32       // [56:60] Number of clusters that the refcount table occupies
-	NbSnapshots           int32       // [60:64] Number of snapshots contained in the image
-	SnapshotsOffset       int64       // [64:72] Offset into the image file at which the snapshot table starts
+	Magic                 []byte      //     [0:3] magic: QCOW magic string ("QFI\xfb")
+	Version               Version     //     [4:7] Version number
+	BackingFileOffset     int64       //    [8:15] Offset into the image file at which the backing file name is stored.
+	BackingFileSize       int32       //   [16:19] Length of the backing file name in bytes.
+	ClusterBits           int32       //   [20:23] Number of bits that are used for addressing an offset whithin a cluster.
+	Size                  int64       //   [24:31] Virtual disk size in bytes
+	CryptMethod           CryptMethod //   [32:35] Crypt method
+	L1Size                int32       //   [36:39] Number of entries in the active L1 table
+	L1TableOffset         int64       //   [40:47] Offset into the image file at which the active L1 table starts
+	RefcountTableOffset   int64       //   [48:55] Offset into the image file at which the refcount table starts
+	RefcountTableClusters int32       //   [56:59] Number of clusters that the refcount table occupies
+	NbSnapshots           int32       //   [60:63] Number of snapshots contained in the image
+	SnapshotsOffset       int64       //   [64:71] Offset into the image file at which the snapshot table starts
+	IncompatibleFeatures  int64       //   [72:79] for version >= 3: Bitmask of incomptible feature
+	CompatibleFeatures    int64       //   [80:87] for version >= 3: Bitmask of compatible feature
+	AutoclearFeatures     int64       //   [88:95] for version >= 3: Bitmask of auto-clear feature
+	RefcountOrder         int32       //   [96:99] for version >= 3: Describes the width of a reference count block entry
+	HeaderLength          int32       // [100:103] for version >= 3: Length of the header structure in bytes
 
-	// The following fields are only valid for version >= 3
-	IncompatibleFeatures int64 // [72:80] Bitmask of incomptible feature
-	CompatibleFeatures   int64 // [80:88] Bitmask of compatible feature
-	AutoclearFeatures    int64 // [88:96] Bitmask of auto-clear feature
-
-	RefcountOrder int32 // [96:100] Describes the width of a reference count block entry
-	HeaderLength  int32 // [100:104] Length of the header structure in bytes
-
-	// ExtensionHeader optional header extensions
+	// ExtensionHeader optional header extensions.
 	ExtensionHeader []ExtensionHeader
 }
 
-// Qcow2Magic QCOW magic string ("QFI\xfb")
-var Qcow2Magic = []byte{0x51, 0x46, 0x49, 0xFB}
-
-// Version version number of qcow image format. valid values are 2 and 3.
+// Version represents a version number of qcow image format.
+// The valid values are 2 and 3.
 type Version int
 
 const (
-	// Version2 qcow2 image format version2
+	// Version2 qcow2 image format version2.
 	Version2 Version = 2
-	// Version3 qcow2 image format version3
+	// Version3 qcow2 image format version3.
 	Version3 Version = 3
 
-	// Version2HeaderSize is the image header at the beginning of the file
+	// Version2HeaderSize is the image header at the beginning of the file.
 	Version2HeaderSize = 72
-	// Version3HeaderSize is directly following the v2 header, up to 104
+	// Version3HeaderSize is directly following the v2 header, up to 104.
 	Version3HeaderSize = 104
 )
 
-// CryptMethod is whether encrypted qcow2 image.
+// CryptMethod represents a whether encrypted qcow2 image.
 // 0 for no enccyption
 // 1 for AES encryption
 type CryptMethod int32
 
 const (
+	// CryptNone no encryption.
 	CryptNone CryptMethod = iota
+	// CryptAES AES encryption.
 	CryptAES
 )
 
-// String implementations of fmt.Stringer
+// String implementations of fmt.Stringer.
 func (cm CryptMethod) String() string {
 	if cm == 1 {
 		return "AES"
@@ -72,110 +74,151 @@ func (cm CryptMethod) String() string {
 	return "none"
 }
 
-type PreallocMode int
+// PreallocationMode represents a mode of Pre-allocation feature.
+type PreallocationMode int
 
 const (
-	PreallocModeOff PreallocMode = iota
-	PreallocModeMetadata
-	PreallocModeFalloc
-	PreallocModeFull
-	PreallocModeMax
+	// PreallocationOff turn off preallocation.
+	PreallocationOff PreallocationMode = iota
+	// PreallocationMetadata preallocation of metadata only mode.
+	PreallocationMetadata
+	// PreallocationFalloc preallocation of falloc only mode.
+	PreallocationFalloc
+	// PreallocationFull full preallocation mode.
+	PreallocationFull
+	// PreallocationMax preallocation maximum preallocation mode.
+	PreallocationMax
 )
 
 const (
+	// MinClusterBits minimum of cluster bits size.
 	MinClusterBits = 9
+	// MaxClusterBits maximum of cluster bits size.
 	MaxClusterBits = 21
 )
 
-// HeaderExtensionType indicators the the entries in the optional header area
+// HeaderExtensionType represents a indicators the the entries in the optional header area
 type HeaderExtensionType int64
 
 const (
-	// HdrExtEndOfArea End of the header extension area
+	// HdrExtEndOfArea End of the header extension area.
 	HdrExtEndOfArea HeaderExtensionType = 0x00000000
-	// HdrExtBackingFileFormat Backing file format name
+	// HdrExtBackingFileFormat Backing file format name.
 	HdrExtBackingFileFormat HeaderExtensionType = 0xE2792ACA
-	// HdrExtFeatureNameTable Feature name table
+	// HdrExtFeatureNameTable Feature name table.
 	HdrExtFeatureNameTable HeaderExtensionType = 0x6803f857
-	// HdrExtBitmapsExtension Bitmaps extension
+	// HdrExtBitmapsExtension Bitmaps extension.
 	HdrExtBitmapsExtension HeaderExtensionType = 0x23852875
 
 	// Safely ignored other unknown header extension
 )
 
-// ExtensionHeader qcow2 optional header extension
+// ExtensionHeader represents a optional header extension.
 type ExtensionHeader struct {
 	Type HeaderExtensionType // [:4] Header extension type
 	Size int                 // [4:8] Length of the header extension data
 	Data []byte              // [8:n] Header extension data
 }
 
-// FeatureNameTable optional header extension that contains the name for features used by the image.
+// FeatureNameTable represents a optional header extension that contains the name for features used by the image.
 type FeatureNameTable struct {
-	Type        int // [:1] Type of feature
-	BitNumber   int // [1:2] Bit number within the selected feature bitmap
-	FeatureName int // [2:48] // Feature name. padded with zeros
+	// Type type of feature [0:1]
+	Type int
+	// BitNumber bit number within the selected feature bitmap [1:2]
+	BitNumber int
+	// FeatureName feature name. padded with zeros [2:48]
+	FeatureName int
 }
 
-// BitmapExtension optional header extension.
+// BitmapExtension represents a optional header extension.
 type BitmapExtension struct {
-	NbBitmaps             int // [1:4] The number of bitmaps contained in the image. Must be greater than ro equal to 1
-	Reserved              int // [4:8] Reserved, must be zero
-	BitmapDirectorySize   int // [8:16] Size of the bitmap directory in bytes. It is the cumulative size of all (nb_bitmaps) bitmap headers
-	BitmapDirectoryOffset int // [16:24] Offste into the image file at which the bitmap directory starts.
+	// NbBitmaps the number of bitmaps contained in the image. Must be greater than ro equal to 1. [1:4]
+	NbBitmaps int
+	// Reserved reserved, must be zero. [4:8]
+	Reserved int
+	// BitmapDirectorySize size of the bitmap directory in bytes. It is the cumulative size of all (nb_bitmaps) bitmap headers. [8:16]
+	BitmapDirectorySize int
+	// BitmapDirectoryOffset offste into the image file at which the bitmap directory starts. [16:24]
+	BitmapDirectoryOffset int
 }
 
-type QCowSnapshotHeader struct {
+// SnapshotHeader represents a header of snapshot.
+type SnapshotHeader struct {
 }
 
-type QCowSnapshotExtraData struct {
+// SnapshotExtraData represents a extra data of snapshot.
+type SnapshotExtraData struct {
 }
 
-type QCowSnapshot struct {
+// Snapshot represents a snapshot.
+type Snapshot struct {
 }
 
-type Qcow2Cache struct{}
-
-type Qcow2UnknownHeaderExtension struct {
-	magic int32
-	len   int32
-	// next QLIST_ENTRY(Qcow2UnknownHeaderExtension)
-	data []int8
+// Cache represents a cache.
+type Cache struct {
 }
 
-type QCow2FeatType int
+// UnknownHeaderExtension represents a unknown of header extension.
+type UnknownHeaderExtension struct {
+	Magic int32
+	Len   int32
+	// Next QLIST_ENTRY(Qcow2UnknownHeaderExtension)
+	Data []int8
+}
+
+// FeatureType represents a type of feature.
+type FeatureType int
 
 const (
-	QCow2FeatTypeIncompatible QCow2FeatType = iota
-	QCow2FeatTypeCompatible
-	QCow2FeatTypeAutoclear
+	// IncompatibleFeature incompatible feature.
+	IncompatibleFeature FeatureType = iota
+	// CompatibleFeature compatible feature.
+	CompatibleFeature
+	// AutoclearFeature Autoclear feature.
+	AutoclearFeature
 )
 
-/* Incompatible feature bits */
-const (
-	QCow2IncompatDirtyBitNr   = 0
-	QCow2IncompatCorruptBitNr = 1
-	QCow2IncompatDirty        = 1 << QCow2IncompatDirtyBitNr
-	QCow2IncompatCorrupt      = 1 << QCow2IncompatCorruptBitNr
+// IncompatDirtyBitNr represents a incompatible dirty bit number.
+type IncompatDirtyBitNr int
 
-	QCow2IncompatMask = QCow2IncompatDirty | QCow2IncompatCorrupt
+// IncompatCorruptBitNr represents a incompatible corrupt bit number.
+type IncompatCorruptBitNr int
+
+const (
+	// IncompatDirty incompatible corrupt bit number.
+	IncompatDirty IncompatDirtyBitNr = 1
+	// IncompatCorrupt incompatible corrupt bit number.
+	IncompatCorrupt IncompatCorruptBitNr = 1
+
+	// IncompatMask mask of incompatible feature.
+	IncompatMask = int(IncompatDirty) | int(IncompatCorrupt)
 )
 
-type QCow2CompatLazyRefcountsBitNr int
+// CompatLazyRefcountsBitNr represents a compatible dirty bit number.
+type CompatLazyRefcountsBitNr int
 
 const (
-	QCow2CompatLazyRefcounts QCow2CompatLazyRefcountsBitNr = 1 << iota
+	// CompatLazyRefcounts refcounts of lazy compatible.
+	CompatLazyRefcounts CompatLazyRefcountsBitNr = 1
 
-	QCow2CompatFeatMask = QCow2CompatLazyRefcounts
+	// CompatFeatMask mask of compatible feature.
+	CompatFeatMask = int(CompatLazyRefcounts)
 )
 
-type QCow2DiscardType int
+// DiscardType represents a type of discard.
+type DiscardType int
 
 const (
-	QCow2DiscardNever QCow2DiscardType = iota
-	QCow2DiscardAlways
-	QCow2DiscardRequest
-	QCow2DiscardSnapshot
-	QCow2DiscardOther
-	QCow2DiscardMax
+	// DiscardNever discard never.
+	DiscardNever DiscardType = iota
+	// DiscardAlways discard always.
+	DiscardAlways
+	// DiscardRequest discard request.
+	DiscardRequest
+	// DiscardSnapshot discard snapshot.
+	DiscardSnapshot
+	// DiscardOther discard other.
+	DiscardOther
+	// DiscardMax discard max.
+	DiscardMax
 )

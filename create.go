@@ -70,7 +70,7 @@ type Config struct {
 	// ClusterSize Must be between 512 and 2M.
 	ClusterSize int
 	// Preallocation Metadata preallocation mode.
-	Preallocation PreallocMode
+	Preallocation PreallocationMode
 	// LazyRefcounts Avoiding metadata I/O and improving performance with the postponed updates reference count.
 	LazyRefcounts bool
 	// NoCow whether turn off COW of the file. only valid on btrfs.
@@ -106,7 +106,7 @@ func Create(cfg *Config) *QCowHeader {
 	blk.allowBeyondEOF = true
 
 	header := &QCowHeader{
-		Magic:                 Qcow2Magic,
+		Magic:                 QcowMagic,
 		Version:               Version3,
 		BackingFileOffset:     int64(0),
 		BackingFileSize:       int32(0),
@@ -138,17 +138,14 @@ func Create(cfg *Config) *QCowHeader {
 		fstat, _ := f.Stat()
 		header.BackingFileSize = int32(fstat.Size())
 	}
-
 	if cfg.Encryption {
 		header.CryptMethod = CryptAES
 	}
-
 	if cfg.LazyRefcounts {
-		header.CompatibleFeatures = int64(QCow2CompatLazyRefcounts)
+		header.CompatibleFeatures = int64(CompatLazyRefcounts)
 	}
 
 	blk.header = header
-
 	if err := blk.WriteHeader(); err != nil {
 		log.Fatal(err)
 	}
