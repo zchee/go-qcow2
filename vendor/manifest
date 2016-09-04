@@ -5,7 +5,7 @@
 			"importpath": "github.com/pkg/errors",
 			"repository": "https://github.com/pkg/errors",
 			"vcs": "git",
-			"revision": "a22138067af1c4942683050411a841ade67fe1eb",
+			"revision": "17b591df37844cde689f4d5813e5cea0927d8dd2",
 			"branch": "master",
 			"notests": true
 		}
