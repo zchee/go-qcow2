@@ -6,7 +6,81 @@ package qcow2
 
 import (
 	"log"
+	"math"
 	"os"
+	"syscall"
+)
+
+// ---------------------------------------------------------------------------
+// go-qcow2
+
+// Image represents a qemu QCow2 image format.
+type Image struct {
+	*BlockBackend
+}
+
+const (
+	// UINT16_SIZE results of sizeof(uint16_t) in C.
+	UINT16_SIZE = 2
+	// UINT32_SIZE results of sizeof(uint32_t) in C.
+	UINT32_SIZE = 4
+	// UINT64_SIZE results of sizeof(uint64_t) in C.
+	UINT64_SIZE = 8
+)
+
+// Version represents a version number of qcow image format.
+// The valid values are 2 and 3.
+type Version uint32
+
+const (
+	// Version2 qcow2 image format version2.
+	Version2 Version = 2
+	// Version3 qcow2 image format version3.
+	Version3 Version = 3
+)
+
+const (
+	// Version2HeaderSize is the image header at the beginning of the file.
+	Version2HeaderSize = 72
+	// Version3HeaderSize is directly following the v2 header, up to 104.
+	Version3HeaderSize = 104
+)
+
+// FeatureNameTable represents a optional header extension that contains the name for features used by the image.
+type FeatureNameTable struct {
+	// Type type of feature [0:1]
+	Type int
+	// BitNumber bit number within the selected feature bitmap [1:2]
+	BitNumber int
+	// FeatureName feature name. padded with zeros [2:48]
+	FeatureName int
+}
+
+// BitmapExtension represents a optional header extension.
+type BitmapExtension struct {
+	// NbBitmaps the number of bitmaps contained in the image. Must be greater than ro equal to 1. [1:4]
+	NbBitmaps int
+	// Reserved reserved, must be zero. [4:8]
+	Reserved int
+	// BitmapDirectorySize size of the bitmap directory in bytes. It is the cumulative size of all (nb_bitmaps) bitmap headers. [8:16]
+	BitmapDirectorySize int
+	// BitmapDirectoryOffset offste into the image file at which the bitmap directory starts. [16:24]
+	BitmapDirectoryOffset int
+}
+
+const BDRV_SECTOR_BITS = 9
+
+var (
+	BDRV_SECTOR_SIZE = 1 << BDRV_SECTOR_BITS // (1ULL << BDRV_SECTOR_BITS)
+	BDRV_SECTOR_MASK = BDRV_SECTOR_SIZE - 1  // ~(BDRV_SECTOR_SIZE - 1)
+)
+
+const (
+	INT8_MAX  = math.MaxInt8
+	INT16_MAX = math.MaxInt16
+	INT32_MAX = math.MaxInt32
+	INT64_MAX = math.MaxInt64
+	INT_MAX   = math.MaxInt32 // INT_MAX == INT32_MAX on darwin_amd64
 )
 
 // ---------------------------------------------------------------------------
@@ -173,10 +247,10 @@ const (
 
 const (
 	// INCOMPAT_DIRTY_BITNR represents a incompatible dirty bit number.
-	INCOMPAT_DIRTY_BITNR = iota
+	INCOMPAT_DIRTY_BITNR = 0
 
 	// INCOMPAT_CORRUPT_BITNR represents a incompatible corrupt bit number.
-	INCOMPAT_CORRUPT_BITNR
+	INCOMPAT_CORRUPT_BITNR = 1
 
 	// INCOMPAT_DIRTY incompatible corrupt bit number.
 	INCOMPAT_DIRTY = 1 << INCOMPAT_DIRTY_BITNR
@@ -189,7 +263,7 @@ const (
 
 const (
 	// COMPAT_LAZY_REFCOUNTS_BITNR represents a compatible dirty bit number.
-	COMPAT_LAZY_REFCOUNTS_BITNR = iota
+	COMPAT_LAZY_REFCOUNTS_BITNR = 0
 	// COMPAT_LAZY_REFCOUNTS refcounts of lazy compatible.
 	COMPAT_LAZY_REFCOUNTS = 1 << COMPAT_LAZY_REFCOUNTS_BITNR
 
@@ -276,15 +350,16 @@ type BDRVState struct {
 	ClusterCacheOffset uint64 // uint64_t
 	// cluster_allocs QLIST_HEAD(QCowClusterAlloc, QCowL2Meta)
 
-	RefcountTable       map[uint64]int64 // uint64_t
-	RefcountTableOffset uint64           // uint64_t
-	RefcountTableSize   uint64           // uint64_t
-	FreeClusterIndex    uint64           // uint64_t
-	FreeByteOffset      uint64           // uint64_t
+	// RefcountTable       map[uint64]int64 // uint64_t
+	RefcountTable       [8][]byte // uint64_t
+	RefcountTableOffset uint64    // uint64_t
+	RefcountTableSize   uint32    // uint32_t
+	FreeClusterIndex    uint64    // uint64_t
+	FreeByteOffset      uint64    // uint64_t
 
 	// lock CoMutex // CoMutex
 
-	// cipher              *QCryptoCipher // current cipher, NULL if no key yet
+	// cipher              *QCryptoCipher // current cipher, nil if no key yet
 	CryptMethodHeader uint32  // uint32_t
 	SnapshotsOffset   uint64  // uint64_t
 	SnapshotsSize     int     // int
@@ -323,8 +398,263 @@ type BDRVState struct {
 	ImageBackingFormat []byte // char *
 }
 
+const REFT_OFFSET_MASK = 1844674407370955110 // 0xfffffffffffffe00ULL
+
 // ---------------------------------------------------------------------------
 // include/block/block_int.h
+
+// BlockDriver represents a block driver.
+type BlockDriver struct {
+	formatName   DriverFmt
+	instanceSize int
+
+	/* set to true if the BlockDriver is a block filter */
+	isFilter bool
+	/* for snapshots block filter like Quorum can implement the
+	 * following recursive callback.
+	 * It's purpose is to recurse on the filter children while calling
+	 * bdrv_recurse_is_first_non_filter on them.
+	 * For a sample implementation look in the future Quorum block filter.
+	 */
+	// bool (*bdrv_recurse_is_first_non_filter)(BlockDriverState *bs, BlockDriverState *candidate)
+
+	// (*bdrv_probe)(const uint8_t *buf, int buf_size, const char *filename) int // TODO
+	// (*bdrv_probe_device)(const char *filename) int // TODO
+
+	/* Any driver implementing this callback is expected to be able to handle
+	 * nil file names in its .bdrv_open() implementation */
+	// (*bdrv_parse_filename)(const char *filename, QDict *options, Error **errp) func() // TODO
+	/* Drivers not implementing bdrv_parse_filename nor bdrv_open should have
+	 * this field set to true, except ones that are defined only by their
+	 * child's bs.
+	 * An example of the last type will be the quorum block driver.
+	 */
+	bdrvNeedsFilename bool
+
+	/* Set if a driver can support backing files */
+	supportsBacking bool
+
+	/* For handling image reopen for split or non-split files */
+	// int (*bdrv_reopen_prepare)(BDRVReopenState *reopen_state,
+	//                            BlockReopenQueue *queue, Error **errp);
+	// void (*bdrv_reopen_commit)(BDRVReopenState *reopen_state);
+	// void (*bdrv_reopen_abort)(BDRVReopenState *reopen_state);
+	// void (*bdrv_join_options)(QDict *options, QDict *old_options);
+
+	// int (*bdrv_open)(BlockDriverState *bs, QDict *options, int flags,
+	//                  Error **errp);
+	// int (*bdrv_file_open)(BlockDriverState *bs, QDict *options, int flags,
+	//                       Error **errp);
+	// void (*bdrv_close)(BlockDriverState *bs);
+	// int (*bdrv_create)(const char *filename, QemuOpts *opts, Error **errp);
+	// int (*bdrv_set_key)(BlockDriverState *bs, const char *key);
+	// int (*bdrv_make_empty)(BlockDriverState *bs);
+
+	// void (*bdrv_refresh_filename)(BlockDriverState *bs, QDict *options);
+
+	// aio
+	// BlockAIOCB *(*bdrv_aio_readv)(BlockDriverState *bs, int64_t sector_num, QEMUIOVector *qiov, int nb_sectors, BlockCompletionFunc *cb, void *opaque);
+	// BlockAIOCB *(*bdrv_aio_writev)(BlockDriverState *bs, int64_t sector_num, QEMUIOVector *qiov, int nb_sectors, BlockCompletionFunc *cb, void *opaque);
+	// BlockAIOCB *(*bdrv_aio_flush)(BlockDriverState *bs, BlockCompletionFunc *cb, void *opaque);
+	// BlockAIOCB *(*bdrv_aio_pdiscard)(BlockDriverState *bs, int64_t offset, int count, BlockCompletionFunc *cb, void *opaque);
+
+	// int coroutine_fn (*bdrv_co_readv)(BlockDriverState *bs, int64_t sector_num, int nb_sectors, QEMUIOVector *qiov);
+	// int coroutine_fn (*bdrv_co_preadv)(BlockDriverState *bs, uint64_t offset, uint64_t bytes, QEMUIOVector *qiov, int flags);
+	// int coroutine_fn (*bdrv_co_writev)(BlockDriverState *bs, int64_t sector_num, int nb_sectors, QEMUIOVector *qiov);
+	// int coroutine_fn (*bdrv_co_writev_flags)(BlockDriverState *bs, int64_t sector_num, int nb_sectors, QEMUIOVector *qiov, int flags);
+	// int coroutine_fn (*bdrv_co_pwritev)(BlockDriverState *bs, uint64_t offset, uint64_t bytes, QEMUIOVector *qiov, int flags);
+
+	// Efficiently zero a region of the disk image.  Typically an image format
+	// would use a compact metadata representation to implement this.  This
+	// function pointer may be nil or return -ENOSUP and .bdrv_co_writev()
+	// will be called instead.
+	//
+	// int coroutine_fn (*bdrv_co_pwrite_zeroes)(BlockDriverState *bs, int64_t offset, int count, BdrvRequestFlags flags);
+	// int coroutine_fn (*bdrv_co_pdiscard)(BlockDriverState *bs, int64_t offset, int count);
+	// int64_t coroutine_fn (*bdrv_co_get_block_status)(BlockDriverState *bs, int64_t sector_num, int nb_sectors, int *pnum, BlockDriverState **file);
+
+	// Invalidate any cached meta-data.
+	// void (*bdrv_invalidate_cache)(BlockDriverState *bs, Error **errp);
+	// int (*bdrv_inactivate)(BlockDriverState *bs);
+
+	// Flushes all data for all layers by calling bdrv_co_flush for underlying
+	// layers, if needed. This function is needed for deterministic
+	// synchronization of the flush finishing callback.
+	// int coroutine_fn (*bdrv_co_flush)(BlockDriverState *bs);
+
+	// Flushes all data that was already written to the OS all the way down to
+	// the disk (for example raw-posix calls fsync()).
+	// int coroutine_fn (*bdrv_co_flush_to_disk)(BlockDriverState *bs);
+
+	// Flushes all internal caches to the OS. The data may still sit in a
+	// writeback cache of the host OS, but it will survive a crash of the qemu
+	// process.
+	// int coroutine_fn (*bdrv_co_flush_to_os)(BlockDriverState *bs);
+
+	protocol_name string
+	// bdrvTruncate  func(bs *BlockDriverState, offset int64) error // NOTE: implemented use interface
+
+	bdrvGetlength     func(bs *BlockDriverState) (int64, error)
+	hasVariableLength bool
+	// int64_t (*bdrv_get_allocated_file_size)(BlockDriverState *bs);
+
+	// int (*bdrv_write_compressed)(BlockDriverState *bs, int64_t sector_num, const uint8_t *buf, int nb_sectors);
+
+	// int (*bdrv_snapshot_create)(BlockDriverState *bs, QEMUSnapshotInfo *sn_info);
+	// int (*bdrv_snapshot_goto)(BlockDriverState *bs, const char *snapshot_id);
+	// int (*bdrv_snapshot_delete)(BlockDriverState *bs, const char *snapshot_id, const char *name, Error **errp);
+	// int (*bdrv_snapshot_list)(BlockDriverState *bs, QEMUSnapshotInfo **psn_info);
+	// int (*bdrv_snapshot_load_tmp)(BlockDriverState *bs, const char *snapshot_id, const char *name, Error **errp);
+	// int (*bdrv_get_info)(BlockDriverState *bs, BlockDriverInfo *bdi);
+	// ImageInfoSpecific *(*bdrv_get_specific_info)(BlockDriverState *bs);
+
+	// int coroutine_fn (*bdrv_save_vmstate)(BlockDriverState *bs, QEMUIOVector *qiov, int64_t pos);
+	// int coroutine_fn (*bdrv_load_vmstate)(BlockDriverState *bs, QEMUIOVector *qiov, int64_t pos);
+
+	// int (*bdrv_change_backing_file)(BlockDriverState *bs, const char *backing_file, const char *backing_fmt);
+
+	// removable device specific
+	// bool (*bdrv_is_inserted)(BlockDriverState *bs);
+	// int (*bdrv_media_changed)(BlockDriverState *bs);
+	// void (*bdrv_eject)(BlockDriverState *bs, bool eject_flag);
+	// void (*bdrv_lock_medium)(BlockDriverState *bs, bool locked);
+
+	// to control generic scsi devices
+	// BlockAIOCB *(*bdrv_aio_ioctl)(BlockDriverState *bs, unsigned long int req, void *buf, BlockCompletionFunc *cb, void *opaque);
+
+	// List of options for creating images, terminated by name == nil
+	createOpts *OptsList
+
+	//
+	// Returns 0 for completed check, -errno for internal errors.
+	// The check results are stored in result.
+	//
+	// int (*bdrv_check)(BlockDriverState* bs, BdrvCheckResult *result, BdrvCheckMode fix);
+
+	// int (*bdrv_amend_options)(BlockDriverState *bs, QemuOpts *opts, BlockDriverAmendStatusCB *status_cb, void *cb_opaque);
+
+	// void (*bdrv_debug_event)(BlockDriverState *bs, BlkdebugEvent event);
+
+	// TODO Better pass a option string/QDict/QemuOpts to add any rule?
+	// int (*bdrv_debug_breakpoint)(BlockDriverState *bs, const char *event, const char *tag);
+	// int (*bdrv_debug_remove_breakpoint)(BlockDriverState *bs, const char *tag);
+	// int (*bdrv_debug_resume)(BlockDriverState *bs, const char *tag);
+	// bool (*bdrv_debug_is_suspended)(BlockDriverState *bs, const char *tag);
+
+	// void (*bdrv_refresh_limits)(BlockDriverState *bs, Error **errp);
+
+	//
+	// Returns 1 if newly created images are guaranteed to contain only
+	// zeros, 0 otherwise.
+	//
+	// int (*bdrv_has_zero_init)(BlockDriverState *bs);
+
+	// Remove fd handlers, timers, and other event loop callbacks so the event
+	// loop is no longer in use.  Called with no in-flight requests and in
+	// depth-first traversal order with parents before child nodes.
+	//
+	// void (*bdrv_detach_aio_context)(BlockDriverState *bs);
+
+	// Add fd handlers, timers, and other event loop callbacks so I/O requests
+	// can be processed again.  Called with no in-flight requests and in
+	// depth-first traversal order with child nodes before parent nodes.
+	//
+	// void (*bdrv_attach_aio_context)(BlockDriverState *bs, AioContext *new_context);
+
+	// io queue for linux-aio
+	// void (*bdrv_io_plug)(BlockDriverState *bs);
+	// void (*bdrv_io_unplug)(BlockDriverState *bs);
+
+	//
+	// Try to get @bs's logical and physical block size.
+	// On success, store them in @bsz and return zero.
+	// On failure, return negative errno.
+	//
+	// int (*bdrv_probe_blocksizes)(BlockDriverState *bs, BlockSizes *bsz);
+
+	//
+	// Try to get @bs's geometry (cyls, heads, sectors)
+	// On success, store them in @geo and return 0.
+	// On failure return -errno.
+	// Only drivers that want to override guest geometry implement this
+	// callback; see hd_geometry_guess().
+	//
+	// int (*bdrv_probe_geometry)(BlockDriverState *bs, HDGeometry *geo);
+
+	//
+	// Drain and stop any internal sources of requests in the driver, and
+	// remain so until next I/O callback (e.g. bdrv_co_writev) is called.
+	//
+	// void (*bdrv_drain)(BlockDriverState *bs);
+
+	// void (*bdrv_add_child)(BlockDriverState *parent, BlockDriverState *child, Error **errp);
+	// void (*bdrv_del_child)(BlockDriverState *parent, BdrvChild *child, Error **errp);
+
+	// QLIST_ENTRY(BlockDriver) list;
+}
+
+type Truncater interface {
+	Truncate(bs *BlockDriverState, offset int64) error
+}
+
+func sizeToL1(s *BDRVState, size int64) int64 {
+	shift := s.ClusterBits + s.L2Bits
+	log.Printf("shift: %+v\n", shift)
+	log.Printf("s.ClusterBits: %+v\n", s.ClusterBits)
+	log.Printf("s.L2Bits: %+v\n", s.L2Bits)
+	log.Printf("sizeToL1: %+v\n", (size + (1 << uint(shift)) - 1))
+	return (size + (1 << uint(shift)) - 1) >> uint(shift)
+}
+
+func MAX(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+const pagesize = 4096
+
+func bdrvOptMemAlign(bs *BlockDriverState) uint32 {
+	if bs == nil || bs.Drv == nil {
+		// page size or 4k (hdd sector size) should be on the safe side
+		return uint32(MAX(4096, pagesize))
+	}
+
+	return bs.BL.OptMemAlignment
+}
+
+// nbSectors return number of sectors.
+func nbSectors(bs *BlockDriverState) (int64, error) {
+	drv := bs.Drv
+
+	if drv == nil {
+		return 0, ENOMEDIUM
+	}
+
+	if drv.hasVariableLength {
+		err := refreshTotalSectors(bs, bs.TotalSectors)
+		if err != nil {
+			return 0, err
+		}
+	}
+
+	return bs.TotalSectors, nil
+}
+
+// getlength return length in bytes.
+// The length is always a multiple of BDRV_SECTOR_SIZE.
+func getlength(bs *BlockDriverState) (int64, error) {
+	length, err := nbSectors(bs)
+	if err != nil {
+		return 0, err
+	}
+
+	if length > int64(INT64_MAX/BDRV_SECTOR_SIZE) {
+		return 0, syscall.EFBIG
+	}
+	return length * int64(BDRV_SECTOR_SIZE), nil
+}
 
 const BLOCK_FLAG_ENCRYPT = 1
 
@@ -332,12 +662,13 @@ const BLOCK_FLAG_LAZY_REFCOUNTS = 8
 
 const BLOCK_PROBE_BUF_SIZE = 512
 
-// Driver represents a name of driver.
-type BlockDriver string
+type DriverFmt string
 
 const (
-	// DriverQCow2 qcow2 driver.
-	DriverQCow2 BlockDriver = "qcow2"
+	// DriverRaw raw driver format.
+	DriverRaw DriverFmt = "raw"
+	// DriverQCow2 qcow2 driver format.
+	DriverQCow2 DriverFmt = "qcow2"
 )
 
 type BlockLimits struct {
@@ -404,7 +735,7 @@ type BlockDriverState struct {
 	ReadOnly     bool  // bool:    if true, the media is read only
 	Encrypted    bool  // bool:    if true, the media is encrypted
 	ValidKey     bool  // bool:    if true, a valid encryption key has been set
-	SG           bool  // bool:    if true, the device is a /dev/sg*
+	SG           bool  // bool:    if true, the device is a /dev/sg* (scsi-generic devices)
 	Probed       bool  // bool:    if true, format was probed rather than specified
 
 	CopyOnRead int // int: if nonzero, copy read backing sectors into image. note this is a reference count.
@@ -432,8 +763,9 @@ type BlockDriverState struct {
 	// FullOpenOptions *QDict // *QDict * TODO
 	ExactFilename string // char: exact_filename[PATH_MAX]
 
-	// Backing *BdrvChild // TODO
-	File os.File // BdrvChild
+	Backing *BdrvChild
+	File    *os.File
+	file    *BdrvChild
 
 	// BeforeWriteNotifiers Callback before write request is processed
 	// BeforeWriteNotifiers NotifierWithReturnList // TODO
@@ -497,8 +829,8 @@ type BlockDriverState struct {
 }
 
 type BdrvChild struct {
-	BlockDriverState *BlockDriverState
-	Name             string
+	bs   *BlockDriverState
+	Name string
 	// Role   *BdrvChildRole
 	Opaque *BDRVState
 	// next QLIST_ENTRY(BdrvChild)
@@ -507,6 +839,20 @@ type BdrvChild struct {
 
 // ---------------------------------------------------------------------------
 // qapi-types.h
+
+type QType int
+
+const (
+	QTYPE_NONE QType = iota
+	QTYPE_QNULL
+	QTYPE_QINT
+	QTYPE_QSTRING
+	QTYPE_QDICT
+	QTYPE_QLIST
+	QTYPE_QFLOAT
+	QTYPE_QBOOL
+	QTYPE__MAX
+)
 
 // PreallocMode represents a mode of Pre-allocation feature.
 type PreallocMode int
@@ -525,67 +871,70 @@ const (
 )
 
 // ---------------------------------------------------------------------------
-// unknown
+// include/qemu/option.h
+
+type OptType int
 
 const (
-	// UINT16_SIZE results of sizeof(uint16_t) in C.
-	UINT16_SIZE = 2
-	// UINT32_SIZE results of sizeof(uint32_t) in C.
-	UINT32_SIZE = 4
-	// UINT64_SIZE results of sizeof(uint64_t) in C.
-	UINT64_SIZE = 8
+	OPT_STRING OptType = 0 // no parsing (use string as-is)
+	OPT_BOOL               // on/off
+	OPT_NUMBER             // simple number
+	OPT_SIZE               // size, accepts (K)ilo, (M)ega, (G)iga, (T)era postfix
 )
 
-// Image represents a qemu QCow2 image format.
-type Image struct {
-	BlockBackend
+type OptDesc struct {
+	Name        string
+	Type        OptType
+	Help        string
+	DefValueStr string
 }
 
-// Version represents a version number of qcow image format.
-// The valid values are 2 and 3.
-type Version uint32
-
-const (
-	// Version2 qcow2 image format version2.
-	Version2 Version = 2
-	// Version3 qcow2 image format version3.
-	Version3 Version = 3
-)
-
-const (
-	// Version2HeaderSize is the image header at the beginning of the file.
-	Version2HeaderSize = 72
-	// Version3HeaderSize is directly following the v2 header, up to 104.
-	Version3HeaderSize = 104
-)
-
-// FeatureNameTable represents a optional header extension that contains the name for features used by the image.
-type FeatureNameTable struct {
-	// Type type of feature [0:1]
-	Type int
-	// BitNumber bit number within the selected feature bitmap [1:2]
-	BitNumber int
-	// FeatureName feature name. padded with zeros [2:48]
-	FeatureName int
+type OptsList struct {
+	Name           string
+	ImpliedOptName string
+	MergeLists     bool // Merge multiple uses of option into a single list?
+	// head QTAILQ_HEAD(, QemuOpts)
+	Desc []OptDesc
 }
 
-// BitmapExtension represents a optional header extension.
-type BitmapExtension struct {
-	// NbBitmaps the number of bitmaps contained in the image. Must be greater than ro equal to 1. [1:4]
-	NbBitmaps int
-	// Reserved reserved, must be zero. [4:8]
-	Reserved int
-	// BitmapDirectorySize size of the bitmap directory in bytes. It is the cumulative size of all (nb_bitmaps) bitmap headers. [8:16]
-	BitmapDirectorySize int
-	// BitmapDirectoryOffset offste into the image file at which the bitmap directory starts. [16:24]
-	BitmapDirectoryOffset int
+// ---------------------------------------------------------------------------
+// include/qemu/option_int.h
+
+type Opt struct {
+	Name string
+	Str  string
+
+	desc  *OptDesc
+	Value struct {
+		Boolean bool
+		_uint   uint64
+	}
+
+	Opts *Opts
+	// QTAILQ_ENTRY(QemuOpt) next;
 }
 
-const BDRV_SECTOR_BITS = 9
+type QemuOpts struct {
+	ID   string
+	List *OptsList
+	// Location loc; // in error-report.h, not needed.
+	// QTAILQ_HEAD(QemuOptHead, QemuOpt) head;
+	// QTAILQ_ENTRY(QemuOpts) next;
+}
 
-var (
-	BDRV_SECTOR_SIZE = 1 << BDRV_SECTOR_BITS // (1ULL << BDRV_SECTOR_BITS)
-	BDRV_SECTOR_MASK = BDRV_SECTOR_SIZE - 1  // ~(BDRV_SECTOR_SIZE - 1)
-)
+// ---------------------------------------------------------------------------
+// include/qapi/qmp/qobject.h
 
-const ReftOffsetMask = 1844674407370955110
+type QObject struct {
+	typ    QType
+	refcnt int64
+}
+
+// ---------------------------------------------------------------------------
+// include/qapi/qmp/qdict.h
+
+type QDict struct {
+	base QObject
+	size int64
+	// QLIST_HEAD(,QDictEntry) table[QDICT_BUCKET_MAX];
+}
