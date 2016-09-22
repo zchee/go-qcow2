@@ -398,7 +398,21 @@ type BDRVState struct {
 	ImageBackingFormat []byte // char *
 }
 
-const REFT_OFFSET_MASK = 1844674407370955110 // 0xfffffffffffffe00ULL
+type CLUSTER uint64
+
+const (
+	CLUSTER_UNALLOCATED CLUSTER = iota
+	CLUSTER_NORMAL
+	CLUSTER_COMPRESSED
+	CLUSTER_ZERO
+)
+
+const (
+	L1E_OFFSET_MASK                 = uint64(72057594037927424)   // 0x00fffffffffffe00ULL
+	L2E_OFFSET_MASK                 = uint64(72057594037927424)   // 0x00fffffffffffe00ULL
+	L2E_COMPRESSED_OFFSET_SIZE_MASK = uint64(4611686018427387903) // 0x3fffffffffffffffULL
+	REFT_OFFSET_MASK                = uint64(1844674407370955110) // 0xfffffffffffffe00ULL
+)
 
 // ---------------------------------------------------------------------------
 // include/block/block_int.h
