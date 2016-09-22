@@ -597,15 +597,6 @@ type Truncater interface {
 	Truncate(bs *BlockDriverState, offset int64) error
 }
 
-func sizeToL1(s *BDRVState, size int64) int64 {
-	shift := s.ClusterBits + s.L2Bits
-	log.Printf("shift: %+v\n", shift)
-	log.Printf("s.ClusterBits: %+v\n", s.ClusterBits)
-	log.Printf("s.L2Bits: %+v\n", s.L2Bits)
-	log.Printf("sizeToL1: %+v\n", (size + (1 << uint(shift)) - 1))
-	return (size + (1 << uint(shift)) - 1) >> uint(shift)
-}
-
 func MAX(a, b int) int {
 	if a > b {
 		return a

@@ -131,7 +131,7 @@ func updateRefcount(bs *BlockDriverState, offset, length int64, addend uint64, d
 		setRefcountRO4(&refcountBlock, uint8(blockIndex), refcount)
 	}
 	// TODO(zchee): hardcoded 131072
-	Write(bs, 131072, bytes.Join(refcountBlock[:], nil), int(offset+length))
+	write(bs, 131072, bytes.Join(refcountBlock[:], nil), int(offset+length))
 
 	return nil
 }
