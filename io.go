@@ -10,7 +10,7 @@ import "os"
 // Return nil on success, err on error.
 //
 // NOTE: This function does not use the pread syscall.
-// The function name only of compatible for qemu intelnal source.
+// The function name only of compatible for QEMU intelnal source.
 func bdrvPread(child *BdrvChild, offset int64, res interface{}, byt uintptr) error {
 	f, err := os.Open(child.Name)
 	if err != nil {
