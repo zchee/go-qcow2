@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// qcow2 package provide the manipulate of qemu qcow2 image format written in pure Go.
+// Package qcow2 implements manage the QEMU qcow2 image format written in pure Go.
 //
 // The below contents are qemu-img command line options from the man page.
 //
