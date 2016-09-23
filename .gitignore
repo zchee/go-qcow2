@@ -29,3 +29,5 @@ _testmain.go
 
 # go-qcow2
 *.qcow2
+# my bad habit
+_tmp
