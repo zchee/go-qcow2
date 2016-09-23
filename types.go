@@ -14,9 +14,35 @@ import (
 // ---------------------------------------------------------------------------
 // go-qcow2
 
-// Image represents a qemu QCow2 image format.
-type Image struct {
-	*BlockBackend
+type writeStatus int
+
+const (
+	BLK_DATA writeStatus = iota
+	BLK_ZERO
+	BLK_BACKING_FILE
+)
+
+// QCow2 represents a QEMU QCow2 image format.
+type QCow2 struct {
+	blk *BlockBackend
+
+	// ImgConvertState
+	src                *BlockBackend
+	srcSectors         int64       // int64_t
+	srcCur, srcNum     int         // int
+	srcCurOffset       int64       // int64_t
+	totalSectors       int64       // int64_t
+	allocatedSectors   int64       // int64_t
+	status             writeStatus // ImgConvertBlockStatus
+	sector_next_status int64       // int64_t
+	target             *BlockBackend
+	hasZeroInit        bool // bool
+	compressed         bool // bool
+	targetHasBacking   bool // bool
+	minSparse          int  // int
+	clusterSectors     int  // size_t
+	bufSectors         int  // size_t
+
 }
 
 const (
@@ -415,6 +441,34 @@ const (
 )
 
 // ---------------------------------------------------------------------------
+// include/block/block.h
+
+type BlockDriverInfo struct {
+	// in bytes, 0 if irrelevant
+	clusterSize int // int
+	// offset at which the VM state can be saved (0 if not possible)
+	vmStateOffset int64 // int64_t
+	isDirty       bool  // bool
+
+	// True if unallocated blocks read back as zeroes. This is equivalent
+	// to the LBPRZ flag in the SCSI logical block provisioning page.
+	unallocatedBlocksAreZero bool // bool
+
+	// True if the driver can optimize writing zeroes by unmapping
+	// sectors. This is equivalent to the BLKDISCARDZEROES ioctl in Linux
+	// with the difference that in qemu a discard is allowed to silently
+	// fail. Therefore we have to use bdrv_pwrite_zeroes with the
+	// BDRV_REQ_MAY_UNMAP flag for an optimized zero write with unmapping.
+	// After this call the driver has to guarantee that the contents read
+	// back as zero. It is additionally required that the block device is
+	// opened with BDRV_O_UNMAP flag for this to work.
+	canWriteZeroesWithUnmap bool // bool
+
+	// True if this block driver only supports compressed writes
+	needsCompressedWrites bool // bool
+}
+
+// ---------------------------------------------------------------------------
 // include/block/block_int.h
 
 // BlockDriver represents a block driver.
@@ -609,13 +663,6 @@ type BlockDriver struct {
 
 type Truncater interface {
 	Truncate(bs *BlockDriverState, offset int64) error
-}
-
-func MAX(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }
 
 const pagesize = 4096
@@ -942,4 +989,23 @@ type QDict struct {
 	base QObject
 	size int64
 	// QLIST_HEAD(,QDictEntry) table[QDICT_BUCKET_MAX];
+}
+
+// ---------------------------------------------------------------------------
+// glib-2.0/glib/gmacros.h
+
+// MIN returns the whichever small of a and b.
+func MIN(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// MAX returns the whichever larger of a and b.
+func MAX(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
