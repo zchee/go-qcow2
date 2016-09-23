@@ -13,12 +13,16 @@ import (
 	"syscall"
 	"unsafe"
 
+	"github.com/davecgh/go-spew/spew"
 	"github.com/pkg/errors"
+	"github.com/zchee/go-qcow2/internal/mem"
 )
 
+const IO_BUF_SIZE = (2 * 1024 * 1024)
+
 // New return the new Qcow.
-func New(config *Opts) *Image {
-	return &Image{}
+func New(config *Opts) *QCow2 {
+	return &QCow2{}
 }
 
 // Opts options of the create qcow2 image format.
@@ -89,7 +93,7 @@ type Opts struct {
 }
 
 // Create creates the new QCow2 virtual disk image by the qemu style.
-func Create(opts *Opts) (*Image, error) {
+func Create(opts *Opts) (*QCow2, error) {
 	if opts.Filename == "" {
 		err := errors.New("Expecting image file name")
 		return nil, err
@@ -110,12 +114,12 @@ func Create(opts *Opts) (*Image, error) {
 	// 	goto fail;
 	// }
 
-	img := new(Image)
+	img := new(QCow2)
 	blk, err := create(opts.Filename, opts)
 	if err != nil {
 		return nil, err
 	}
-	img.BlockBackend = blk
+	img.blk = blk
 	return img, nil
 }
 
@@ -351,14 +355,14 @@ func create(filename string, opts *Opts) (*BlockBackend, error) {
 	}
 
 	// Write a header data to image file
-	write(blk.bs(), 0, blk.buf.Bytes(), blk.buf.Len())
+	writeFile(blk.bs(), 0, blk.buf.Bytes(), blk.buf.Len())
 
 	// Write a refcount table with one refcount block
 	refcountTable := make([][]byte, 2*clusterSize)
 	refcountTable[0] = BEUvarint64(uint64(2 * clusterSize))
 
 	// TODO(zchee): int(2*clusterSize))?
-	write(blk.bs(), clusterSize, bytes.Join(refcountTable, []byte{}), int(clusterSize))
+	writeFile(blk.bs(), clusterSize, bytes.Join(refcountTable, []byte{}), int(clusterSize))
 
 	blk.BlockDriverState.Drv = new(BlockDriver)
 	blk.BlockDriverState.Drv.bdrvGetlength = getlength
@@ -392,6 +396,7 @@ func create(filename string, opts *Opts) (*BlockBackend, error) {
 	blk.bs().Opaque.L2Size = 1 << uint(blk.bs().Opaque.L2Bits)
 	blk.bs().Opaque.RefcountTableOffset = blk.Header.RefcountTableOffset
 	// blk.bs().Opaque.RefcountTableSize = blk.Header.RefcountTableClusters << uint(blk.bs().Opaque.ClusterBits-3)
+	blk.bs().TotalSectors = int64(blk.Header.Size / 512)
 
 	// Okay, now that we have a valid image, let's give it the right size
 	if err := truncate(blk.bs(), size); err != nil {
@@ -474,8 +479,12 @@ func truncate(bs *BlockDriverState, offset int64) error {
 	return nil
 }
 
-// write writes the data in image file.
-func write(bs *BlockDriverState, offset int64, data []byte, length int) error {
+// writeFile seeks `offset` size, encodes the `data` to big endian format and
+// write to the image file.
+// If length is bigger than the writed byte data size, fills with zeros the
+// up to the length of the `length`.
+// Not only of seek, actually grow the file size.
+func writeFile(bs *BlockDriverState, offset int64, data []byte, length int) error {
 	if bs.File == nil {
 		err := errors.New("Not found BlockBackend file")
 		return err
@@ -489,12 +498,6 @@ func write(bs *BlockDriverState, offset int64, data []byte, length int) error {
 	if err != nil {
 		return errors.Wrap(err, "Could not write a data")
 	}
-	// stat, _ := bs.File.Stat()
-	// if offset > stat.Size() {
-	// 	bs.File.WriteAt(buf.Bytes(), offset)
-	// } else {
-	// 	bs.File.WriteAt(buf.Bytes(), stat.Size())
-	// }
 
 	if length > off {
 		if err := zeroFill(bs.File, int64(length-off)); err != nil {
