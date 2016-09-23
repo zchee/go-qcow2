@@ -52,6 +52,6 @@ func ctz32(val uint32) int {
 func posixMemalign(alignment uint64, size uint64) []byte {
 	var ptr C.void
 	ptr2 := unsafe.Pointer(&ptr)
-	C.posix_memalign(&ptr2, C.size_t(uintptr(alignment)), C.size_t(uintptr(size)))
-	return []byte(C.GoBytes(unsafe.Pointer(&ptr), C.int(C.size_t(size))))
+	writesize := C.posix_memalign(&ptr2, C.size_t(uintptr(alignment)), C.size_t(uintptr(size)))
+	return []byte(C.GoBytes(unsafe.Pointer(&ptr), writesize))
 }
