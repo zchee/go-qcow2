@@ -27,21 +27,21 @@ type QCow2 struct {
 	blk *BlockBackend
 
 	// ImgConvertState
-	src                *BlockBackend
-	srcSectors         int64       // int64_t
-	srcCur, srcNum     int         // int
-	srcCurOffset       int64       // int64_t
-	totalSectors       int64       // int64_t
-	allocatedSectors   int64       // int64_t
-	status             writeStatus // ImgConvertBlockStatus
-	sector_next_status int64       // int64_t
-	target             *BlockBackend
-	hasZeroInit        bool // bool
-	compressed         bool // bool
-	targetHasBacking   bool // bool
-	minSparse          int  // int
-	clusterSectors     int  // size_t
-	bufSectors         int  // size_t
+	src              *BlockBackend
+	srcSectors       int64         // int64_t
+	srcCur, srcNum   int           // int
+	srcCurOffset     int64         // int64_t
+	totalSectors     int64         // int64_t
+	allocatedSectors int64         // int64_t
+	status           writeStatus   // ImgConvertBlockStatus
+	sectorNextStatus int64         // int64_t
+	target           *BlockBackend // BlockBackend
+	hasZeroInit      bool          // bool
+	compressed       bool          // bool
+	targetHasBacking bool          // bool
+	minSparse        int           // int
+	clusterSectors   int           // size_t
+	bufSectors       int           // size_t
 
 }
 
@@ -54,8 +54,8 @@ const (
 	UINT64_SIZE = 8
 )
 
-// Version represents a version number of qcow image format.
-// The valid values are 2 and 3.
+// Version represents a version number of qcow2 image format.
+// The valid values are 2 or 3.
 type Version uint32
 
 const (
@@ -97,17 +97,11 @@ type BitmapExtension struct {
 const BDRV_SECTOR_BITS = 9
 
 var (
-	BDRV_SECTOR_SIZE = 1 << BDRV_SECTOR_BITS // (1ULL << BDRV_SECTOR_BITS)
-	BDRV_SECTOR_MASK = BDRV_SECTOR_SIZE - 1  // ~(BDRV_SECTOR_SIZE - 1)
+	BDRV_SECTOR_SIZE = 1 << BDRV_SECTOR_BITS   // (1ULL << BDRV_SECTOR_BITS)
+	BDRV_SECTOR_MASK = ^(BDRV_SECTOR_SIZE - 1) // ~(BDRV_SECTOR_SIZE - 1)
 )
 
-const (
-	INT8_MAX  = math.MaxInt8
-	INT16_MAX = math.MaxInt16
-	INT32_MAX = math.MaxInt32
-	INT64_MAX = math.MaxInt64
-	INT_MAX   = math.MaxInt32 // INT_MAX == INT32_MAX on darwin_amd64
-)
+var BDRV_REQUEST_MAX_SECTORS = MIN(SIZE_MAX>>BDRV_SECTOR_BITS, INT_MAX>>BDRV_SECTOR_BITS)
 
 // ---------------------------------------------------------------------------
 // block/qcow2.c
@@ -142,7 +136,6 @@ const (
 // block/qcow2.h
 
 // MAGIC qemu QCow(2) magic ("QFI\xfb").
-// Original source code:
 //  #define QCOW_MAGIC (('Q' << 24) | ('F' << 16) | ('I' << 8) | 0xfb)
 var MAGIC = []byte{0x51, 0x46, 0x49, 0xFB}
 
@@ -467,6 +460,16 @@ type BlockDriverInfo struct {
 	// True if this block driver only supports compressed writes
 	needsCompressedWrites bool // bool
 }
+
+const (
+	BDRV_BLOCK_DATA         = 0x01
+	BDRV_BLOCK_ZERO         = 0x02
+	BDRV_BLOCK_OFFSET_VALID = 0x04
+	BDRV_BLOCK_RAW          = 0x08
+	BDRV_BLOCK_ALLOCATED    = 0x10
+)
+
+var BDRV_BLOCK_OFFSET_MASK = BDRV_SECTOR_MASK
 
 // ---------------------------------------------------------------------------
 // include/block/block_int.h
@@ -1009,3 +1012,40 @@ func MAX(a, b int) int {
 	}
 	return b
 }
+
+// ---------------------------------------------------------------------------
+// stdint.h
+
+// Just wrapped of the math stdlib package const variable.
+// Right side comments carried from the C header.
+
+const (
+	INT8_MAX  = math.MaxInt8  // 127
+	INT16_MAX = math.MaxInt16 // 32767
+	INT32_MAX = math.MaxInt32 // 2147483647
+	INT64_MAX = math.MaxInt64 // 9223372036854775807LL
+	INT_MAX   = math.MaxInt32 // INT_MAX == INT32_MAX on darwin,amd64
+)
+
+const (
+	INT8_MIN  = math.MinInt8  // -128
+	INT16_MIN = math.MinInt16 // -32768
+	// Note (from stdint.h):
+	// the literal "most negative int" cannot be written in C --
+	// the rules in the standard (section 6.4.4.1 in C99) will give it
+	// an unsigned type, so INT32_MIN (and the most negative member of
+	// any larger signed type) must be written via a constant expression.
+	INT32_MIN = math.MinInt32 // (-INT32_MAX-1)
+	INT64_MIN = math.MinInt64 // (-INT64_MAX-1)
+)
+
+const (
+	UINT8_MAX  = math.MaxUint8  // 255
+	UINT16_MAX = math.MaxUint16 // 65535
+	UINT32_MAX = math.MaxUint32 // 4294967295U
+	UINT64_MAX = math.MaxUint64 // 18446744073709551615ULL
+)
+
+const (
+	SIZE_MAX = math.MaxUint64 // #if __WORDSIZE == 64; UINT64_MAX; #else; #define SIZE_MAX	UINT32_MAX; #endif
+)
