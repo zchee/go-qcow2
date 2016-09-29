@@ -15,7 +15,6 @@ import (
 
 	"github.com/davecgh/go-spew/spew"
 	"github.com/pkg/errors"
-	"github.com/zchee/go-qcow2/internal/mem"
 )
 
 const IO_BUF_SIZE = (2 * 1024 * 1024)
@@ -292,13 +291,13 @@ func create(filename string, opts *Opts) (*BlockBackend, error) {
 	blk.allowBeyondEOF = true
 
 	blk.Header = Header{
-		Magic:                 BEUint32(MAGIC),
-		Version:               version,
+		Magic:                 BEUint32(MAGIC), // uint32
+		Version:               version,         // uint32
 		BackingFileOffset:     uint64(0),
 		BackingFileSize:       uint32(0),
 		ClusterBits:           uint32(clusterBits),
-		Size:                  uint64(size), // TODO(zchee): Sets to when initializing of the header? qemu is after initialization.
-		CryptMethod:           CRYPT_NONE,
+		Size:                  uint64(size),   // TODO(zchee): Sets to when initializing of the header? qemu is after initialization.
+		CryptMethod:           CRYPT_NONE,     // uint32
 		L1Size:                uint32(128),    // TODO(zchee): hardcoded
 		L1TableOffset:         uint64(458752), // TODO(zchee): hardcoded
 		RefcountTableOffset:   uint64(clusterSize),
@@ -568,7 +567,7 @@ func (blk *BlockBackend) Open(filename, reference string, options *BlockOption, 
 
 // Open open the QCow2 block-backend image file.
 // callgraph:
-// qemu-img.c:img_create -> bdrv_img_create -> bdrv_open -> bdrv_open_inherit -> bdrv_open_common -> drv->bdrv_open -> .bdrv_open = qcow2_open
+//  qemu-img.c:img_create -> bdrv_img_create -> bdrv_open -> bdrv_open_inherit -> bdrv_open_common -> drv->bdrv_open -> .bdrv_open = qcow2_open
 func Open(bs *BlockDriverState, options *QDict, flag int) error {
 	s := bs.Opaque
 	var header Header
@@ -717,6 +716,188 @@ func Open(bs *BlockDriverState, options *QDict, flag int) error {
 	}
 
 	// ret = validate_table_offset(bs, header.l1_table_offset, header.l1_size, sizeof(uint64_t));
+
+	return nil
+}
+
+// getInfo gets the BlockDriverInfo informations.
+//  static int qcow2_get_info(BlockDriverState *bs, BlockDriverInfo *bdi)
+func getInfo(bs *BlockDriverState) *BlockDriverInfo {
+	bdi := new(BlockDriverInfo)
+	s := bs.Opaque
+
+	bdi.unallocatedBlocksAreZero = true
+	bdi.canWriteZeroesWithUnmap = (s.Version >= 3)
+	bdi.clusterSize = s.ClusterSize
+	bdi.vmStateOffset = vmStateOffset(s)
+
+	return bdi
+}
+
+// selectPart
+//  static void convert_select_part(ImgConvertState *s, int64_t sector_num)
+func (q *QCow2) selectPart(sectorNum int64) {
+	for (sectorNum - q.srcCurOffset) >= int64(BEUvarint64(uint64(q.srcSectors))[q.srcCur]) {
+		q.srcCurOffset += int64(BEUvarint64(uint64(q.srcSectors))[q.srcCur])
+		q.srcCur++
+	}
+}
+
+func (q *QCow2) iterationSectors(sectorNum int64) (int, error) {
+	// q.selectPart(sectorNum)
+
+	n := MIN(int(q.totalSectors-sectorNum), BDRV_SECTOR_BITS)
+	log.Printf("n: %+v\n", n)
+
+	if q.sectorNextStatus <= sectorNum {
+		// TODO(zchee): hardcoded BDRV_BLOCK_DATA
+		s := BDRV_BLOCK_DATA
+		// BlockDriverState *file;
+		// ret = bdrv_get_block_status(blk_bs(s->src[s->src_cur]),
+		// 							sector_num - s->src_cur_offset,
+		// 							n, &n, &file);
+
+		switch {
+		case s == BDRV_BLOCK_ZERO:
+			q.status = BLK_ZERO
+		case s == BDRV_BLOCK_DATA:
+			q.status = BLK_DATA
+		case !q.targetHasBacking:
+			// TODO(zchee): omit
+		default:
+			q.status = BLK_BACKING_FILE
+		}
+
+		q.sectorNextStatus = sectorNum + int64(n)
+	}
+
+	n = MIN(n, int(q.sectorNextStatus-sectorNum))
+	if q.status == BLK_DATA {
+		n = MIN(n, q.bufSectors)
+	}
+
+	// TODO(zchee): support zlib compressed write
+	// We need to write complete clusters for compressed images, so if an
+	// unallocated area is shorter than that, we must consider the whole
+	// cluster allocated
+	// if (s->compressed) {
+	// 	 if (n < s->cluster_sectors) {
+	// 		 n = MIN(s->cluster_sectors, s->total_sectors - sector_num);
+	// 		 s->status = BLK_DATA;
+	// 	 } else {
+	// 		 n = QEMU_ALIGN_DOWN(n, s->cluster_sectors);
+	// 	 }
+	//  }
+
+	return n, nil
+}
+
+func (q *QCow2) readData(sectorNum, n int, buf *[]byte) error {
+	return nil
+}
+
+func (q *QCow2) writeData(sectorNum, n int, buf *[]byte) error {
+	return nil
+}
+
+func (q *QCow2) Write(data []byte) error {
+	bufsectors := IO_BUF_SIZE / BDRV_SECTOR_SIZE
+	totalSectors := q.blk.bs().TotalSectors
+
+	// increase bufsectors from the default 4096 (2M) if opt_transfer
+	// or discard_alignment of the out_bs is greater. Limit to 32768 (16MB)
+	// as maximum.
+	bufsectors = MIN(32768,
+		MAX(bufsectors,
+			MAX(int(q.blk.bs().BL.OptTransfer>>BDRV_SECTOR_BITS), int(q.blk.bs().BL.PdiscardAlignment>>BDRV_SECTOR_BITS))))
+
+	bdi := getInfo(q.blk.bs())
+
+	log.Printf("q:\n%+v\n", spew.Sdump(q))
+	q.src = q.blk
+	// q.srcSectors = bsSectors
+	// q.srcNum = bs_n
+	q.totalSectors = totalSectors
+	q.target = q.blk
+	// TODO(zchee): hardcoded false
+	q.compressed = false
+	// q.targetHasBacking = out_baseimg
+	q.minSparse = 8 // Need at least 4k of zeros for sparse detection
+	q.clusterSectors = bdi.clusterSize / BDRV_SECTOR_SIZE
+	q.bufSectors = bufsectors
+
+	// ------------------------------------------------------------------------
+	// static int convert_do_copy(ImgConvertState *s)
+
+	buf := posixMemalign(4096, uint64(bufsectors*BDRV_SECTOR_SIZE))
+	log.Printf("posixMemalign buf: %+v\n", buf)
+
+	// Calculate allocated sectors for progress
+	q.allocatedSectors = 0
+	log.Printf("q.totalSectors: %+v\n", q.totalSectors)
+	// var sectorNum int64
+	// for int64(sectorNum) < q.totalSectors {
+	// 	n, err := q.iterationSectors(sectorNum)
+	// 	if err != nil && n < 0 {
+	// 		return err
+	// 	}
+	// 	if q.status == BLK_DATA || q.minSparse != 0 && q.status == BLK_ZERO {
+	// 		q.allocatedSectors += int64(n)
+	// 	}
+	// 	sectorNum += int64(n)
+	// 	log.Printf("sectorNum: %+v\n", sectorNum)
+	// }
+
+	// Do the write
+	q.srcCur = 0
+	q.srcCurOffset = 0
+	q.sectorNextStatus = 0
+
+	// sectorNum = 0
+	// allocated_done = 0
+
+	// for int64(sectorNum) < q.totalSectors {
+	// 	n, err := q.iterationSectors(sectorNum)
+	// 	if err != nil && n < 0 {
+	// 		return err
+	// 	}
+	// 	if q.status == BLK_DATA || q.minSparse != 0 && q.status == BLK_ZERO {
+	// 		allocated_done += int64(n)
+	// 	}
+	//
+	// 	if q.status == BLK_DATA {
+	// 		if err := q.readData(int(sectorNum), n, &buf); err != nil {
+	// 			err = errors.Wrapf(err, "error while reading sector %d", sectorNum)
+	// 			return err
+	// 		}
+	// 	} else if q.minSparse != 0 && q.status == BLK_ZERO {
+	// 		n = MIN(n, q.bufSectors)
+	// 		mem.Set(buf, 0)
+	// 	}
+	//
+	// 	if err := q.writeData(int(sectorNum), n, &buf); err != nil {
+	// 		err = errors.Wrapf(err, "error while writing sector %d", sectorNum)
+	// 		return err
+	// 	}
+	//
+	// 	sectorNum += int64(n)
+	// }
+
+	// TODO(zchee): support zlib compressed write
+	// if (s->compressed) {
+	// 	/* signal EOF to align */
+	// 	ret = blk_write_compressed(s->target, 0, NULL, 0);
+	// 	if (ret < 0) {
+	// 		goto fail;
+	// 	}
+	// }
+
+	// TODO(zchee): hardcoded
+	writeFile(q.blk.bs(), 131080, []byte{0, 1, 0, 1, 0, 1, 0, 1}, 8)
+	writeFile(q.blk.bs(), 196608, []byte{128, 0, 0, 0, 0, 4}, 6)
+	writeFile(q.blk.bs(), 262144, []byte{128, 0, 0, 0, 0, 5}, 6)
+	writeFile(q.blk.bs(), 262264, []byte{128, 0, 0, 0, 0, 6}, 6)
+	writeFile(q.blk.bs(), 327680, data, len(data))
 
 	return nil
 }
