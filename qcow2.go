@@ -13,7 +13,6 @@ import (
 	"syscall"
 	"unsafe"
 
-	"github.com/davecgh/go-spew/spew"
 	"github.com/pkg/errors"
 )
 
@@ -89,6 +88,15 @@ type Opts struct {
 	ObjectSize int
 
 	RefcountBits int
+}
+
+func (q *QCow2) Len() (int64, error) {
+	stat, err := q.blk.bs().File.Stat()
+	if err != nil {
+		return 0, err
+	}
+
+	return stat.Size(), nil
 }
 
 // Create creates the new QCow2 virtual disk image by the qemu style.
@@ -813,7 +821,6 @@ func (q *QCow2) Write(data []byte) error {
 
 	bdi := getInfo(q.blk.bs())
 
-	log.Printf("q:\n%+v\n", spew.Sdump(q))
 	q.src = q.blk
 	// q.srcSectors = bsSectors
 	// q.srcNum = bs_n
