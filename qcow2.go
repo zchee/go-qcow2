@@ -469,9 +469,7 @@ func truncate(bs *BlockDriverState, offset int64) error {
 		return err
 	}
 
-	log.Printf("offset: %+v\n", offset)
 	newL1Size := sizeToL1(s, offset)
-	log.Printf("newL1Size: %+v\n", newL1Size)
 	if err := growL1Table(bs, uint64(newL1Size), true); err != nil {
 		return err
 	}
@@ -642,13 +640,12 @@ func Open(bs *BlockDriverState, options *QDict, flag int) error {
 		return err
 	}
 
-	var extEnd uint64
-	if header.BackingFileOffset != 0 {
-		extEnd = header.BackingFileOffset
-	} else {
-		extEnd = 1 << header.ClusterBits
-	}
-	log.Printf("extEnd: %+v\n", extEnd)
+	// var extEnd uint64
+	// if header.BackingFileOffset != 0 {
+	// 	extEnd = header.BackingFileOffset
+	// } else {
+	// 	extEnd = 1 << header.ClusterBits
+	// }
 
 	// Handle feature bits
 	s.IncompatibleFeatures = header.IncompatibleFeatures
@@ -755,7 +752,6 @@ func (q *QCow2) iterationSectors(sectorNum int64) (int, error) {
 	// q.selectPart(sectorNum)
 
 	n := MIN(int(q.totalSectors-sectorNum), BDRV_SECTOR_BITS)
-	log.Printf("n: %+v\n", n)
 
 	if q.sectorNextStatus <= sectorNum {
 		// TODO(zchee): hardcoded BDRV_BLOCK_DATA
@@ -899,7 +895,7 @@ func (q *QCow2) Write(data []byte) error {
 	// 	}
 	// }
 
-	// TODO(zchee): hardcoded
+	// TODO(zchee): tired... hardcoded
 	writeFile(q.blk.bs(), 131080, []byte{0, 1, 0, 1, 0, 1, 0, 1}, 8)
 	writeFile(q.blk.bs(), 196608, []byte{128, 0, 0, 0, 0, 4}, 6)
 	writeFile(q.blk.bs(), 262144, []byte{128, 0, 0, 0, 0, 5}, 6)

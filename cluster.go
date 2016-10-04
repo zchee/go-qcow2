@@ -5,7 +5,6 @@
 package qcow2
 
 import (
-	"log"
 	"syscall"
 
 	"github.com/zchee/go-qcow2/internal/mem"
@@ -45,13 +44,9 @@ func growL1Table(bs *BlockDriverState, minSize uint64, exactSize bool) error {
 		return syscall.EFBIG
 	}
 
-	log.Printf("grow l1_table from %d to %d\n", s.L1Size, newL1Size)
-
 	newL1Size2 := UINT64_SIZE * newL1Size
-	log.Printf("newL1Size2: %+v\n", newL1Size2)
 	align := bdrvOptMemAlign(bs)
 	newL1Table := posixMemalign(uint64(align), uint64(alignOffset(newL1Size2, 512)))
-	log.Printf("newL1Table: %+v\n", newL1Table)
 	if newL1Table == nil {
 		return syscall.ENOMEM
 	}
@@ -60,11 +55,10 @@ func growL1Table(bs *BlockDriverState, minSize uint64, exactSize bool) error {
 	mem.Cpy(newL1Table, []byte{byte(s.L1Table)}, uintptr(s.L1Size*UINT64_SIZE))
 
 	// write new table (align to cluster)
-	newL1TableOffset, err := AllocClusters(bs, uint64(newL1Size2))
-	if err != nil {
-		return err
-	}
-	log.Printf("newL1TableOffset: %+v\n", newL1TableOffset)
+	// newL1TableOffset, err := AllocClusters(bs, uint64(newL1Size2))
+	// if err != nil {
+	// 	return err
+	// }
 
 	// ret = qcow2_cache_flush(bs, s->refcount_block_cache);
 	// if (ret < 0) {

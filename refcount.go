@@ -7,7 +7,6 @@ package qcow2
 import (
 	"bytes"
 	"errors"
-	"log"
 	"syscall"
 )
 
@@ -69,7 +68,6 @@ func AllocClusters(bs *BlockDriverState, size uint64) (int64, error) {
 			return offset, err
 		}
 
-		log.Printf("offset, length: %+v, %+v\n", offset, int64(size))
 		err = updateRefcount(bs, offset, int64(size), 1, false, DISCARD_NEVER)
 		if err != syscall.EAGAIN {
 			break

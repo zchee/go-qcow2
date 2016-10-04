@@ -5,7 +5,6 @@
 package qcow2
 
 import (
-	"log"
 	"math"
 	"os"
 	"syscall"
@@ -324,14 +323,13 @@ type DiscardRegion struct {
 
 // GetRefcountFunc typedef uint64_t Qcow2GetRefcountFunc(const void *refcount_array, uint64_t index);
 func GetRefcountFunc(refcountArray map[uint64]uintptr, index uint64) uint64 {
-	ro0 := (refcountArray[index/8] >> (index % 8)) & 0x1
-	ro1 := (refcountArray)[index/4] >> (2 * (index % 4))
-	ro2 := (refcountArray)[index/2] >> (4 * (index % 2))
-	ro3 := (refcountArray)[index]
-	ro4 := BEUvarint16(uint16(refcountArray[index]))
-	ro5 := BEUvarint32(uint32(refcountArray[index]))
-	ro6 := BEUvarint64(uint64(refcountArray[index]))
-	log.Println(ro0, ro1, ro2, ro3, ro4, ro5, ro6)
+	// ro0 := (refcountArray[index/8] >> (index % 8)) & 0x1
+	// ro1 := (refcountArray)[index/4] >> (2 * (index % 4))
+	// ro2 := (refcountArray)[index/2] >> (4 * (index % 2))
+	// ro3 := (refcountArray)[index]
+	// ro4 := BEUvarint16(uint16(refcountArray[index]))
+	// ro5 := BEUvarint32(uint32(refcountArray[index]))
+	// ro6 := BEUvarint64(uint64(refcountArray[index]))
 
 	// TODO(zchee): WIP
 	return 0
